@@ -13,6 +13,7 @@ import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 
 from PIL import Image 
+Image.MAX_IMAGE_PIXELS = None  # 关闭PIL的解压炸
 from typing import Any, Dict, List, Optional
 
 from src.core import register, GLOBAL_CONFIG

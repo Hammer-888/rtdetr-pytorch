@@ -4,146 +4,11 @@
 import copy
 import torch 
 import torch.nn as nn 
-import torch.nn.functional as F
+import torch.nn.functional as F 
 
-try:
-    from einops.layers.torch import Rearrange
-except ImportError:
-    # Fallback implementation if einops is not available
-    class Rearrange(nn.Module):
-        def __init__(self, pattern):
-            super().__init__()
-            self.pattern = pattern
-        
-        def forward(self, x):
-            if self.pattern == 'b c t h w -> b (c t) h w':
-                b, c, t, h, w = x.shape
-                return x.reshape(b, c * t, h, w)
-            return x 
+from .utils import get_activation
 
-try:
-    from .utils import get_activation
-except ImportError:
-    # 用于测试时的fallback
-    def get_activation(name):
-        import torch.nn as nn
-        if name == 'gelu':
-            return nn.GELU()
-        elif name == 'relu':
-            return nn.ReLU()
-        else:
-            return nn.Identity()
-
-try:
-    from src.core import register
-except ImportError:
-    # 用于测试时的fallback
-    def register(cls):
-        return cls
-
-
-class SpatialGatingUnit(nn.Module):
-    def __init__(self, d_ffn, seq_len):
-        super().__init__()
-        self.norm = nn.LayerNorm(d_ffn)
-        self.spatial_proj = nn.Conv1d(seq_len, seq_len, kernel_size=1)
-        nn.init.constant_(self.spatial_proj.bias, 1.0)
-
-    def forward(self, x):
-        u, v = x.chunk(2, dim=-1)
-        v = self.norm(v)
-        v = self.spatial_proj(v)
-        out = u * v
-        return out
-
-
-class gMLPBlock(nn.Module):
-    def __init__(self, d_model, d_ffn, seq_len):
-        super().__init__()
-        self.norm = nn.LayerNorm(d_model)
-        self.channel_proj1 = nn.Linear(d_model, d_ffn * 2)
-        self.channel_proj2 = nn.Linear(d_ffn, d_model)
-        self.sgu = SpatialGatingUnit(d_ffn, seq_len)
-
-    def forward(self, x):
-        residual = x
-        x = self.norm(x)
-        x = F.gelu(self.channel_proj1(x))
-        x = self.sgu(x)
-        x = self.channel_proj2(x)
-        out = x + residual
-        return out
-
-
-# --------------------------------------------------------
-# DEA-Net: Single image dehazing based on detail enhanced convolution and content-guided attention
-# GitHub: https://github.com/cecret3350/DEA-Net/tree/main
-# --------------------------------------------------------
-
-class SpatialAttention(nn.Module):
-    def __init__(self):
-        super(SpatialAttention, self).__init__()
-        self.sa = nn.Conv2d(2, 1, 7, padding=3, padding_mode='reflect', bias=True)
-
-    def forward(self, x):
-        x_avg = torch.mean(x, dim=1, keepdim=True)
-        x_max, _ = torch.max(x, dim=1, keepdim=True)
-        x2 = torch.cat([x_avg, x_max], dim=1)
-        sattn = self.sa(x2)
-        return sattn
-
-
-class ChannelAttention(nn.Module):
-    def __init__(self, dim, reduction=8):
-        super(ChannelAttention, self).__init__()
-        self.gap = nn.AdaptiveAvgPool2d(1)
-        self.ca = nn.Sequential(
-            nn.Conv2d(dim, dim // reduction, 1, padding=0, bias=True),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(dim // reduction, dim, 1, padding=0, bias=True),
-        )
-
-    def forward(self, x):
-        x_gap = self.gap(x)
-        cattn = self.ca(x_gap)
-        return cattn
-
-
-class PixelAttention(nn.Module):
-    def __init__(self, dim):
-        super(PixelAttention, self).__init__()
-        self.pa2 = nn.Conv2d(2 * dim, dim, 7, padding=3, padding_mode='reflect', groups=dim, bias=True)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x, pattn1):
-        B, C, H, W = x.shape
-        x = x.unsqueeze(dim=2)  # B, C, 1, H, W
-        pattn1 = pattn1.unsqueeze(dim=2)  # B, C, 1, H, W
-        x2 = torch.cat([x, pattn1], dim=2)  # B, C, 2, H, W
-        x2 = Rearrange('b c t h w -> b (c t) h w')(x2)
-        pattn2 = self.pa2(x2)
-        pattn2 = self.sigmoid(pattn2)
-        return pattn2
-
-
-class CGAFusion(nn.Module):
-    def __init__(self, dim, reduction=8):
-        super(CGAFusion, self).__init__()
-        self.sa = SpatialAttention()
-        self.ca = ChannelAttention(dim, reduction)
-        self.pa = PixelAttention(dim)
-        self.conv = nn.Conv2d(dim, dim, 1, bias=True)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x, y):
-        initial = x + y
-        cattn = self.ca(initial)
-        sattn = self.sa(initial)
-        pattn1 = sattn + cattn
-        pattn2 = self.sigmoid(self.pa(initial, pattn1))
-        result = initial + pattn2 * x + (1 - pattn2) * y
-        result = self.conv(result)
-        return result
+from src.core import register
 
 
 __all__ = ['HybridEncoder']
@@ -255,30 +120,21 @@ class TransformerEncoderLayer(nn.Module):
                  dim_feedforward=2048,
                  dropout=0.1,
                  activation="relu",
-                 normalize_before=False,
-                 seq_len=None):
+                 normalize_before=False):
         super().__init__()
         self.normalize_before = normalize_before
-        self.seq_len = seq_len
 
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout, batch_first=True)
 
-        # 使用gMLPBlock替代原有的FFN结构
-        if seq_len is not None:
-            self.ffn = gMLPBlock(d_model, dim_feedforward, seq_len)
-            self.use_gmlp = True
-        else:
-            # 保留原有的FFN结构作为fallback
-            self.linear1 = nn.Linear(d_model, dim_feedforward)
-            self.dropout = nn.Dropout(dropout)
-            self.linear2 = nn.Linear(dim_feedforward, d_model)
-            self.norm2 = nn.LayerNorm(d_model)
-            self.dropout2 = nn.Dropout(dropout)
-            self.activation = get_activation(activation)
-            self.use_gmlp = False
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
 
         self.norm1 = nn.LayerNorm(d_model)
-        self.dropout1 = nn.Dropout(dropout) 
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.activation = get_activation(activation) 
 
     @staticmethod
     def with_pos_embed(tensor, pos_embed):
@@ -295,17 +151,13 @@ class TransformerEncoderLayer(nn.Module):
         if not self.normalize_before:
             src = self.norm1(src)
 
-        # FFN部分：使用gMLPBlock或原有结构
-        if self.use_gmlp:
-            src = self.ffn(src)
-        else:
-            residual = src
-            if self.normalize_before:
-                src = self.norm2(src)
-            src = self.linear2(self.dropout(self.activation(self.linear1(src))))
-            src = residual + self.dropout2(src)
-            if not self.normalize_before:
-                src = self.norm2(src)
+        residual = src
+        if self.normalize_before:
+            src = self.norm2(src)
+        src = self.linear2(self.dropout(self.activation(self.linear1(src))))
+        src = residual + self.dropout2(src)
+        if not self.normalize_before:
+            src = self.norm2(src)
         return src
 
 
@@ -343,8 +195,7 @@ class HybridEncoder(nn.Module):
                  expansion=1.0,
                  depth_mult=1.0,
                  act='silu',
-                 eval_spatial_size=None,
-                 use_improved_fusion=True):
+                 eval_spatial_size=None):
         super().__init__()
         self.in_channels = in_channels
         self.feat_strides = feat_strides
@@ -353,7 +204,6 @@ class HybridEncoder(nn.Module):
         self.num_encoder_layers = num_encoder_layers
         self.pe_temperature = pe_temperature
         self.eval_spatial_size = eval_spatial_size
-        self.use_improved_fusion = use_improved_fusion
 
         self.out_channels = [hidden_dim for _ in range(len(in_channels))]
         self.out_strides = feat_strides
@@ -368,17 +218,17 @@ class HybridEncoder(nn.Module):
                 )
             )
 
-        # encoder transformer - 保存参数用于动态创建
-        self.encoder_params = {
-            'd_model': hidden_dim,
-            'nhead': nhead,
-            'dim_feedforward': dim_feedforward,
-            'dropout': dropout,
-            'activation': enc_act
-        }
-        
-        # 初始化时不创建encoder，在forward时根据seq_len动态创建
-        self.encoder = nn.ModuleDict()
+        # encoder transformer
+        encoder_layer = TransformerEncoderLayer(
+            hidden_dim, 
+            nhead=nhead,
+            dim_feedforward=dim_feedforward, 
+            dropout=dropout,
+            activation=enc_act)
+
+        self.encoder = nn.ModuleList([
+            TransformerEncoder(copy.deepcopy(encoder_layer), num_encoder_layers) for _ in range(len(use_encoder_idx))
+        ])
 
         # top-down fpn
         self.lateral_convs = nn.ModuleList()
@@ -399,17 +249,6 @@ class HybridEncoder(nn.Module):
             self.pan_blocks.append(
                 CSPRepLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion)
             )
-        
-        # CGA fusion modules for improved feature fusion (only if enabled)
-        if self.use_improved_fusion:
-            self.cga_fusion_fpn = nn.ModuleList()
-            self.cga_fusion_pan = nn.ModuleList()
-            for _ in range(len(in_channels) - 1):
-                self.cga_fusion_fpn.append(CGAFusion(hidden_dim))
-                self.cga_fusion_pan.append(CGAFusion(hidden_dim))
-        else:
-            self.cga_fusion_fpn = None
-            self.cga_fusion_pan = None
 
         self._reset_parameters()
 
@@ -448,24 +287,7 @@ class HybridEncoder(nn.Module):
         # encoder
         if self.num_encoder_layers > 0:
             for i, enc_ind in enumerate(self.use_encoder_idx):
-                # 确保索引不超出范围
-                if enc_ind >= len(proj_feats):
-                    continue
                 h, w = proj_feats[enc_ind].shape[2:]
-                seq_len = h * w
-                
-                # 动态创建或获取encoder
-                encoder_key = f'encoder_{i}_{seq_len}'
-                if encoder_key not in self.encoder:
-                    encoder_layer = TransformerEncoderLayer(
-                        seq_len=seq_len,
-                        **self.encoder_params
-                    )
-                    encoder = TransformerEncoder(encoder_layer, self.num_encoder_layers)
-                    # 关键修复：将新创建的encoder移动到正确的设备
-                    encoder = encoder.to(proj_feats[enc_ind].device)
-                    self.encoder[encoder_key] = encoder
-                
                 # flatten [B, C, H, W] to [B, HxW, C]
                 src_flatten = proj_feats[enc_ind].flatten(2).permute(0, 2, 1)
                 if self.training or self.eval_spatial_size is None:
@@ -474,15 +296,11 @@ class HybridEncoder(nn.Module):
                 else:
                     pos_embed = getattr(self, f'pos_embed{enc_ind}', None).to(src_flatten.device)
 
-                memory = self.encoder[encoder_key](src_flatten, pos_embed=pos_embed)
+                memory = self.encoder[i](src_flatten, pos_embed=pos_embed)
                 proj_feats[enc_ind] = memory.permute(0, 2, 1).reshape(-1, self.hidden_dim, h, w).contiguous()
                 # print([x.is_contiguous() for x in proj_feats ])
 
         # broadcasting and fusion
-        # 特殊处理：如果只有一个输入通道，直接返回
-        if len(self.in_channels) == 1:
-            return proj_feats
-            
         inner_outs = [proj_feats[-1]]
         for idx in range(len(self.in_channels) - 1, 0, -1):
             feat_high = inner_outs[0]
@@ -490,14 +308,7 @@ class HybridEncoder(nn.Module):
             feat_high = self.lateral_convs[len(self.in_channels) - 1 - idx](feat_high)
             inner_outs[0] = feat_high
             upsample_feat = F.interpolate(feat_high, scale_factor=2., mode='nearest')
-            
-            if self.use_improved_fusion:
-                # 使用CGA融合替代简单concatenation
-                cga_fused = self.cga_fusion_fpn[len(self.in_channels) - 1 - idx](upsample_feat, feat_low)
-                inner_out = self.fpn_blocks[len(self.in_channels)-1-idx](torch.concat([cga_fused, feat_low], dim=1))
-            else:
-                # 传统的简单concatenation
-                inner_out = self.fpn_blocks[len(self.in_channels)-1-idx](torch.concat([upsample_feat, feat_low], dim=1))
+            inner_out = self.fpn_blocks[len(self.in_channels)-1-idx](torch.concat([upsample_feat, feat_low], dim=1))
             inner_outs.insert(0, inner_out)
 
         outs = [inner_outs[0]]
@@ -505,14 +316,7 @@ class HybridEncoder(nn.Module):
             feat_low = outs[-1]
             feat_high = inner_outs[idx + 1]
             downsample_feat = self.downsample_convs[idx](feat_low)
-            
-            if self.use_improved_fusion:
-                # 使用CGA融合替代简单concatenation
-                cga_fused = self.cga_fusion_pan[idx](downsample_feat, feat_high)
-                out = self.pan_blocks[idx](torch.concat([cga_fused, feat_high], dim=1))
-            else:
-                # 传统的简单concatenation
-                out = self.pan_blocks[idx](torch.concat([downsample_feat, feat_high], dim=1))
+            out = self.pan_blocks[idx](torch.concat([downsample_feat, feat_high], dim=1))
             outs.append(out)
 
         return outs

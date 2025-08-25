@@ -3,7 +3,7 @@ __include__: [
   '../runtime.yml',
   './include/dataloader.yml',
   './include/optimizer.yml',
-  './include/rtdetr_pvt_small.yml',
+  './include/rtdetr_pvt_small_improved.yml',
 ]
 
-output_dir: ./output/rtdetr_pvt_small_6x_coco_improved
+output_dir: ./output/rtdetr_pvt_small_6x_coco

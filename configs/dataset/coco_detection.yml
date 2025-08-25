@@ -7,13 +7,14 @@ train_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: ./datasets/DUT/train/img
-    ann_folder: ./datasets/DUT/annotations/instances_train2017.json
+    img_folder: datasets/DUT/train/img
+    ann_file: datasets/DUT/annotations/instances_train2017.json
+    return_masks: False
     transforms:
       type: Compose
       ops: ~
   shuffle: True
-  batch_size: 8
+  batch_size: 1
   num_workers: 4
   drop_last: True 
 
@@ -22,13 +23,14 @@ val_dataloader:
   type: DataLoader
   dataset: 
     type: CocoDetection
-    img_folder: ./datasets/DUT/train/img
-    ann_folder: ./datasets/DUT/annotations/instances_val2017.json
+    img_folder: datasets/DUT/val/img
+    ann_file: datasets/DUT/annotations/instances_val2017.json
+    return_masks: False
     transforms:
       type: Compose
       ops: ~ 
 
   shuffle: False
-  batch_size: 8
+  batch_size: 1
   num_workers: 4
   drop_last: False

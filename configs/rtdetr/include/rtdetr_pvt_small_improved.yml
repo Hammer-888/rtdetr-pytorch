@@ -6,22 +6,28 @@ postprocessor: RTDETRPostProcessor
 
 
 RTDETR: 
-  backbone: PResNet
-  encoder: HybridEncoder
+  backbone: PVT
+  encoder: HybridEncoderImproved
   decoder: RTDETRTransformer
   multi_scale: [480, 512, 544, 576, 608, 640, 640, 640, 672, 704, 736, 768, 800]
 
-PResNet:
-  depth: 50
-  variant: d
-  freeze_at: 0
+PVT:
+  variant: pvt_small
+  embed_dims: [64, 128, 320, 512]
+  num_heads: [1, 2, 5, 8]
+  mlp_ratios: [8, 8, 4, 4]
+  depths: [3, 4, 6, 3]
+  sr_ratios: [8, 4, 2, 1]
   return_idx: [1, 2, 3]
   num_stages: 4
+  freeze_at: -1
   freeze_norm: True
-  pretrained: True 
+  pretrained: True
+  drop_path_rate: 0.1
+  img_size: 640
 
-HybridEncoder:
-  in_channels: [512, 1024, 2048]
+HybridEncoderImproved:
+  in_channels: [128, 320, 512]  # Fixed to match PVT output channels [1,2,3]
   feat_strides: [8, 16, 32]
 
   # intra
@@ -49,7 +55,7 @@ RTDETRTransformer:
   hidden_dim: 256
   num_levels: 3
 
-  num_queries: 3
+  num_queries: 300
 
   num_decoder_layers: 6
   num_denoising: 100
@@ -61,7 +67,7 @@ RTDETRTransformer:
 use_focal_loss: True
 
 RTDETRPostProcessor:
-  num_top_queries: 3
+  num_top_queries: 300
 
 
 SetCriterion:
@@ -76,6 +82,3 @@ SetCriterion:
     # use_focal_loss: True 
     alpha: 0.25
     gamma: 2.0
-
-
-

@@ -166,8 +166,17 @@ class OverlapPatchEmbed(nn.Module):
         self.patch_size = patch_size
         self.H, self.W = img_size[0] // stride, img_size[1] // stride
         self.num_patches = self.H * self.W
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
-                              padding=(patch_size[0] // 2, patch_size[1] // 2))
+        
+        # Fix padding calculation to avoid size mismatch
+        # For proper stride alignment, use padding that ensures output size = input_size // stride
+        if patch_size[0] == stride and patch_size[1] == stride:
+            # When patch_size == stride, no padding needed for exact division
+            padding = (0, 0)
+        else:
+            # Use minimal padding for overlapping patches
+            padding = ((patch_size[0] - stride) // 2, (patch_size[1] - stride) // 2)
+            
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride, padding=padding)
         self.norm = nn.LayerNorm(embed_dim)
 
     def forward(self, x):
@@ -207,7 +216,10 @@ class PVT(nn.Module):
                 patch_embed = OverlapPatchEmbed(img_size=img_size, patch_size=4, stride=4, in_chans=in_chans,
                                                 embed_dim=embed_dims[i])
             else:
-                patch_embed = OverlapPatchEmbed(img_size=img_size // (2 ** (i + 1)), patch_size=2, stride=2,
+                # Fix: Use dynamic img_size based on previous stage output
+                # For stage i, the input size is img_size // (4 * 2^(i-1))
+                current_size = img_size // (4 * (2 ** (i - 1)))
+                patch_embed = OverlapPatchEmbed(img_size=current_size, patch_size=2, stride=2,
                                                 in_chans=embed_dims[i - 1], embed_dim=embed_dims[i])
             self.patch_embeds.append(patch_embed)
 

@@ -9,7 +9,13 @@ import torch
 import torch.utils.data
 
 import torchvision
-torchvision.disable_beta_transforms_warning()
+
+# Safely disable beta transforms warning if available
+try:
+    torchvision.disable_beta_transforms_warning()
+except AttributeError:
+    # Older versions don't have this function
+    pass
 
 from torchvision import datapoints
 
@@ -17,15 +23,22 @@ from pycocotools import mask as coco_mask
 
 from src.core import register
 
-__all__ = ['CocoDetection']
+__all__ = ["CocoDetection"]
 
 
 @register
 class CocoDetection(torchvision.datasets.CocoDetection):
-    __inject__ = ['transforms']
-    __share__ = ['remap_mscoco_category']
-    
-    def __init__(self, img_folder, ann_file, transforms, return_masks, remap_mscoco_category=False):
+    __inject__ = ["transforms"]
+    __share__ = ["remap_mscoco_category"]
+
+    def __init__(
+        self,
+        img_folder,
+        ann_file,
+        transforms,
+        return_masks,
+        remap_mscoco_category=False,
+    ):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks, remap_mscoco_category)
@@ -37,31 +50,32 @@ class CocoDetection(torchvision.datasets.CocoDetection):
     def __getitem__(self, idx):
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
-        target = {'image_id': image_id, 'annotations': target}
+        target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
 
         # ['boxes', 'masks', 'labels']:
-        if 'boxes' in target:
-            target['boxes'] = datapoints.BoundingBox(
-                target['boxes'], 
-                format=datapoints.BoundingBoxFormat.XYXY, 
-                spatial_size=img.size[::-1]) # h w
+        if "boxes" in target:
+            target["boxes"] = datapoints.BoundingBox(
+                target["boxes"],
+                format=datapoints.BoundingBoxFormat.XYXY,
+                spatial_size=img.size[::-1],
+            )  # h w
 
-        if 'masks' in target:
-            target['masks'] = datapoints.Mask(target['masks'])
+        if "masks" in target:
+            target["masks"] = datapoints.Mask(target["masks"])
 
         if self._transforms is not None:
             img, target = self._transforms(img, target)
-            
+
         return img, target
 
     def extra_repr(self) -> str:
-        s = f' img_folder: {self.img_folder}\n ann_file: {self.ann_file}\n'
-        s += f' return_masks: {self.return_masks}\n'
-        if hasattr(self, '_transforms') and self._transforms is not None:
-            s += f' transforms:\n   {repr(self._transforms)}'
+        s = f" img_folder: {self.img_folder}\n ann_file: {self.ann_file}\n"
+        s += f" return_masks: {self.return_masks}\n"
+        if hasattr(self, "_transforms") and self._transforms is not None:
+            s += f" transforms:\n   {repr(self._transforms)}"
 
-        return s 
+        return s
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -94,7 +108,7 @@ class ConvertCocoPolysToMask(object):
 
         anno = target["annotations"]
 
-        anno = [obj for obj in anno if 'iscrowd' not in obj or obj['iscrowd'] == 0]
+        anno = [obj for obj in anno if "iscrowd" not in obj or obj["iscrowd"] == 0]
 
         boxes = [obj["bbox"] for obj in anno]
         # guard against no boxes via resizing
@@ -106,8 +120,8 @@ class ConvertCocoPolysToMask(object):
         if self.remap_mscoco_category:
             classes = [mscoco_category2label[obj["category_id"]] for obj in anno]
         else:
-            classes = [obj["category_id"]-1 for obj in anno]
-            
+            classes = [obj["category_id"] - 1 for obj in anno]
+
         classes = torch.tensor(classes, dtype=torch.int64)
 
         if self.return_masks:
@@ -141,17 +155,20 @@ class ConvertCocoPolysToMask(object):
 
         # for conversion to coco api
         area = torch.tensor([obj["area"] for obj in anno])
-        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        iscrowd = torch.tensor(
+            [obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno]
+        )
         target["area"] = area[keep]
         target["iscrowd"] = iscrowd[keep]
 
         target["orig_size"] = torch.as_tensor([int(w), int(h)])
         target["size"] = torch.as_tensor([int(w), int(h)])
-    
+
         return image, target
 
-mscoco_category2name ={
-        1: 'UAV',
+
+mscoco_category2name = {
+    1: "UAV",
 }
 # mscoco_category2name = {
 #     1: 'person',

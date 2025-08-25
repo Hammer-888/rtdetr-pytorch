@@ -6,4 +6,4 @@ __include__: [
   './include/rtdetr_pvt_small.yml',
 ]
 
-output_dir: ./output/rtdetr_pvt_small_6x_coco
+output_dir: ./output/rtdetr_pvt_small_6x_coco_improved

@@ -22,12 +22,12 @@ PVT:
   num_stages: 4
   freeze_at: -1
   freeze_norm: True
-  pretrained: False
+  pretrained: True
   drop_path_rate: 0.1
   img_size: 640
 
 HybridEncoder:
-  in_channels: [512, 1024, 2048]  # Adapted to match PVT output channels
+  in_channels: [128, 320, 512]  # Fixed to match PVT output channels [1,2,3]
   feat_strides: [8, 16, 32]
 
   # intra

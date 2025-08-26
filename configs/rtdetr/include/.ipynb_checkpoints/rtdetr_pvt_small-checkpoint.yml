@@ -9,10 +9,12 @@ RTDETR:
   backbone: PVT
   encoder: HybridEncoder
   decoder: RTDETRTransformer
-  multi_scale: [480, 512, 544, 576, 608, 640, 640, 640, 672, 704, 736, 768, 800]
+  multi_scale: [ 512, 640, 640, 640, 768, 512, 640, 640, 640, 768]
 
 PVT:
   variant: pvt_small
+  patch_size: 4
+  qkv_bias: True
   embed_dims: [64, 128, 320, 512]
   num_heads: [1, 2, 5, 8]
   mlp_ratios: [8, 8, 4, 4]
@@ -20,8 +22,6 @@ PVT:
   sr_ratios: [8, 4, 2, 1]
   return_idx: [1, 2, 3]
   num_stages: 4
-  freeze_at: -1
-  freeze_norm: True
   pretrained: True
   drop_path_rate: 0.1
   img_size: 640
@@ -41,7 +41,7 @@ HybridEncoder:
   pe_temperature: 10000
   
   # cross
-  expansion: 1.0
+  expansion: 1
   depth_mult: 1
   act: 'silu'
 

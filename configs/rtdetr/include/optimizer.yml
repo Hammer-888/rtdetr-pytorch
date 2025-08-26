@@ -12,7 +12,7 @@ epoches: 200
 clip_max_norm: 0.1
 
 optimizer:
-  type: AdamW
+  type: AdamW # AdamW
   params: 
     - 
       params: 'backbone'
@@ -24,7 +24,7 @@ optimizer:
       params: '^(?=.*decoder(?=.*bias|.*norm.*weight)).*$'
       weight_decay: 0.
 
-  lr: 0.0002 # 0.0001
+  lr: 0.0001 # 0.0001
   betas: [0.9, 0.999]
   weight_decay: 0.0001
 
